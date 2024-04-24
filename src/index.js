@@ -1,41 +1,9 @@
-const express = require('express')
-const serverless = require('serverless-http')
-const AWS = require('aws-sdk')
-const xlsx = require('xlsx')
-require('dotenv').config()
-const AUTH_TOKEN = process.env.AUTH_TOKEN
+const AWS = require('aws-sdk');
+const xlsx = require('xlsx');
+require('dotenv').config();
+const AUTH_TOKEN = process.env.AUTH_TOKEN;
 
-const app = express()
-app.use(express.json())
-
-const router = express.Router()
-router.use((req, res, next) => {
-  const token = req.get('x-auth-token')
-  if (!!token && token === AUTH_TOKEN) {
-    next()
-  } else {
-    res.status(401).json({ message: 'Invalid auth token' })
-  }
-})
-
-router.post('/jsonToExcel', async (req, res) => {
-  const { s3FilePublic, s3Region, s3Bucket, s3KeyId, s3SecretKey, s3Path } = req.body.config
-  const jsonData = req.body.excel
-  const excelData = convertJsonToExcel(jsonData)
-  AWS.config.update({ accessKeyId: s3KeyId, secretAccessKey: s3SecretKey, region: s3Region, signatureVersion: 'v4' })
-  const s3 = new AWS.S3()
-  const dataset = {
-    Bucket: s3Bucket,
-    Key: s3Path,
-    Body: excelData,
-    ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ACL: !!s3FilePublic ? 'public-read' : 'private',
-  }
-  const response = await s3.upload(dataset).promise()
-  return res.json(response.Location)
-})
-
-function convertJsonToExcel(jsonData) {
+const convertJsonToExcel = (jsonData) => {
   const workbook = xlsx.utils.book_new();
   
   Object.keys(jsonData).forEach((sheetName) => {
@@ -44,22 +12,44 @@ function convertJsonToExcel(jsonData) {
   });
 
   return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-}
+};
 
-app.use('/api', router)
+const handler = async (event) => {
+  const { config, excel } = JSON.parse(event.body);
+  const { s3FilePublic, s3Region, s3Bucket, s3KeyId, s3SecretKey, s3Path } = config;
+  
+  if (!AUTH_TOKEN || event.headers['x-auth-token'] !== AUTH_TOKEN) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ message: 'Invalid auth token' }),
+    };
+  }
 
-const startServer = async () => {
-  app.listen(3000, () => {
-    console.log('listening on port 3000!')
-  })
-}
-startServer()
+  const excelData = await convertJsonToExcel(excel);
 
-//lambda handling
-const handler = serverless(app)
+  AWS.config.update({ accessKeyId: s3KeyId, secretAccessKey: s3SecretKey, region: s3Region, signatureVersion: 'v4' });
+  const s3 = new AWS.S3();
 
-exports.handler = async (event, context, callback) => {
-  const response = handler(event, context, callback)
-  return response
-}
+  const dataset = {
+    Bucket: s3Bucket,
+    Key: s3Path,
+    Body: excelData,
+    ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ACL: s3FilePublic ? 'public-read' : 'private',
+  };
 
+  try {
+    const response = await s3.upload(dataset).promise();
+    return {
+      statusCode: 200,
+      body: JSON.stringify(response.Location),
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ message: 'Error uploading file to S3', error }),
+    };
+  }
+};
+
+exports.handler = handler;
