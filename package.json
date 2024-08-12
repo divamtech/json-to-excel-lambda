@@ -1,13 +1,15 @@
 {
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node src/index.js"
+    "start": "node src/index.js"
   },
   "dependencies": {
     "aws-sdk": "^2.1588.0",
-    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "serverless-http": "^3.2.0",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5"
   }
 }
