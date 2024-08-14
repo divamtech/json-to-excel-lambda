@@ -23,7 +23,8 @@ router.use((req, res, next) => {
   }
 })
 
-router.post('/jsonToStyledExcel', async (req, res) => {
+router.post('/lambda/json-to-excel/styled', async (req, res) => {
+  console.log('styled working')
   const jsonData = req.body.excel
   const defaultStyle = req.body.config.default_style
   const excelData = await convertJsonToStyledExcel(jsonData, defaultStyle)
@@ -31,12 +32,23 @@ router.post('/jsonToStyledExcel', async (req, res) => {
   return res.json({ url })
 })
 
-router.post('*', async (req, res) => {
+router.post('/styled', async (req, res) => {
+  console.log('styled not working form infra side')
+  return res.json({ message: "jsonToStyledExcel" })
+})
+
+router.post('/api/jsonToExcel', async (req, res) => {
+  console.log('old path')
   const jsonData = req.body.excel
   const excelData = await convertJsonToExcel(jsonData)
   const link = await uploadToAWS(req.body.config, excelData)
 
   return res.json(link)
+})
+
+router.post('*', async (req, res) => {
+  console.log('default path')
+  return res.json({ message: "default path" })
 })
 
 const uploadToAWS = async (config, excelData) => {
@@ -127,6 +139,8 @@ if (!isAWSLambda) {
 const handler = serverless(app)
 
 exports.handler = async (event, context, callback) => {
-  const response = handler(event, context, callback)
+  // console.log("entryyyyyy---->", event)
+  const response = await handler(event, context, callback)
+  // console.log('request closed as response', response)
   return response
 }
