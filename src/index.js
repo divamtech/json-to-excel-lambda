@@ -25,30 +25,35 @@ router.use((req, res, next) => {
 
 router.post('/lambda/json-to-excel/styled', async (req, res) => {
   console.log('styled working')
-  const jsonData = req.body.excel
-  const defaultStyle = req.body.config.default_style
-  const excelData = await convertJsonToStyledExcel(jsonData, defaultStyle)
-  const url = await uploadToAWS(req.body.config, excelData)
-  return res.json({ url })
+  try {
+    const jsonData = req.body.excel
+    const defaultStyle = req.body.config.default_style
+    const excelData = await convertJsonToStyledExcel(jsonData, defaultStyle)
+    const url = await uploadToAWS(req.body.config, excelData)
+    return res.json({ url })  
+  } catch (error) {
+    console.log('error', error)
+    res.status(400).json({ message: 'error in your request payload', error: error.message, rawError: error })
+  }
 })
 
-router.post('/styled', async (req, res) => {
-  console.log('styled not working form infra side')
-  return res.json({ message: "jsonToStyledExcel" })
-})
 
 router.post('/api/jsonToExcel', async (req, res) => {
-  console.log('old path')
-  const jsonData = req.body.excel
-  const excelData = await convertJsonToExcel(jsonData)
-  const link = await uploadToAWS(req.body.config, excelData)
-
-  return res.json(link)
+  try {
+    console.log('old path')
+    const jsonData = req.body.excel
+    const excelData = await convertJsonToExcel(jsonData)
+    const link = await uploadToAWS(req.body.config, excelData)
+    return res.json(link)
+  } catch (error) {
+    console.log('error', error)
+    res.status(400).json({ message: 'error in your request payload', error: error.message, rawError: error })
+  }
 })
 
 router.post('*', async (req, res) => {
-  console.log('default path')
-  return res.json({ message: "default path" })
+  console.log('nothing to do path')
+  return res.json({ message: "wrong method or path" })
 })
 
 const uploadToAWS = async (config, excelData) => {
@@ -124,6 +129,7 @@ async function convertJsonToStyledExcel(jsonData, defaultStyle) {
   return buffer
 }
 
+// const servicePrefix = process.env.SERVICE_PREFIX || '/'
 app.use('/', router)
 
 const startServer = async () => {
@@ -139,8 +145,6 @@ if (!isAWSLambda) {
 const handler = serverless(app)
 
 exports.handler = async (event, context, callback) => {
-  // console.log("entryyyyyy---->", event)
   const response = await handler(event, context, callback)
-  // console.log('request closed as response', response)
   return response
 }
