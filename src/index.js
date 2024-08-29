@@ -87,23 +87,27 @@ async function convertJsonToStyledExcel(jsonData, defaultStyle) {
   const workbook = new ExcelJS.Workbook()
   Object.keys(jsonData).forEach((sheetName) => {
     const worksheet = workbook.addWorksheet(sheetName)
-    Object.entries(jsonData[sheetName].headers).forEach(([headerText, style]) => {
-      const headerRow = worksheet.addRow([headerText])
-      const headerStyle = style
-      headerRow.getCell(1).style = headerStyle
-    })
+    if (jsonData[sheetName].headers) {
+      Object.entries(jsonData[sheetName].headers).forEach(([headerText, style]) => {
+        const headerRow = worksheet.addRow([headerText])
+        const headerStyle = style
+        headerRow.getCell(1).style = headerStyle
+      })
+    }
 
     // Get column headers from the first row of data
-    const columnHeaders = Object.values(jsonData[sheetName].keysValue).map((keyValueObj) => keyValueObj.value)
+    const columnHeaders = jsonData[sheetName].keysValue ? Object.values(jsonData[sheetName].keysValue).map((keyValueObj) => keyValueObj.value) : Object.keys(jsonData[sheetName].data[0])
     const headerRow = worksheet.addRow(columnHeaders)
 
     // Apply styles from "keysValue" to the header row
-    Object.values(jsonData[sheetName].keysValue).forEach((keyValueObj, index) => {
-      const cell = headerRow.getCell(index + 1)
-      if (keyValueObj.style) {
-        cell.style = keyValueObj.style
-      }
-    })
+    if (jsonData[sheetName].keysValue) {
+      Object.values(jsonData[sheetName].keysValue).forEach((keyValueObj, index) => {
+        const cell = headerRow.getCell(index + 1)
+        if (keyValueObj.style) {
+          cell.style = keyValueObj.style
+        }
+      })
+    }
 
     const headers = Object.keys(jsonData[sheetName].data[0])
     // Iterate over rows from the JSON data
@@ -118,10 +122,31 @@ async function convertJsonToStyledExcel(jsonData, defaultStyle) {
             ...row[key].style,
           }
         }
+        if (row[key].input) {
+          const formulae = row[key].input.options ? [`"${row[key].input.options.join(',')}"`] : [];
+          const validationType = row[key].input.type || ''; 
+
+          const dropdownColumnIndex = colIndex + 1;
+          // Apply data validation for all rows in this column (from the second row onwards)
+          worksheet.getColumn(dropdownColumnIndex).eachCell({ includeEmpty: true }, (cell, rowNumber) => {
+            if (rowNumber > 1) { // Skip the header row
+              cell.dataValidation = {
+                type: validationType,
+                allowBlank: false,
+                formulae: formulae,
+                showErrorMessage: true,
+                errorTitle: 'Invalid Selection',
+                error: 'Please select a value from the dropdown',
+              };
+            }
+          });
+        }
+
       })
     })
+
     worksheet.columns.forEach((column) => {
-      column.width = defaultStyle.width || 10
+      column.width = defaultStyle ? defaultStyle.width : 10
     })
   })
 
