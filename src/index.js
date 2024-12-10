@@ -95,8 +95,43 @@ async function convertJsonToStyledExcel(jsonData, defaultStyle) {
       })
     }
 
-    // Get column headers from the first row of data
-    const columnHeaders = jsonData[sheetName].keysValue ? Object.values(jsonData[sheetName].keysValue).map((keyValueObj) => keyValueObj.value) : Object.keys(jsonData[sheetName].data[0])
+    // Add subHeaders and corresponding subHeadersData after headers, if they exist
+    if (jsonData[sheetName].subHeaders) {
+      const subHeaderValues = Object.values(jsonData[sheetName].subHeaders).map(subHeaderObj => subHeaderObj.value);
+
+      // Add subHeaders in the next row
+      worksheet.addRow(subHeaderValues);
+
+      // Apply styles for subHeaders
+      Object.values(jsonData[sheetName].subHeaders).forEach((subHeaderObj, index) => {
+        const subHeaderCell = worksheet.getRow(worksheet.rowCount).getCell(index + 1); // Row number dynamically
+        if (subHeaderObj.style) {
+          subHeaderCell.style = subHeaderObj.style;
+        }
+      });
+
+      // Now add the subHeadersData corresponding to each subHeader, if available
+      if (jsonData[sheetName].subHeadersData) {
+        const subHeaderDataObject = jsonData[sheetName].subHeadersData[0]; // Access the first object in the array
+        const subHeaderDataValues = Object.keys(subHeaderDataObject).map(key => {
+          return subHeaderDataObject[key].value;
+        });
+        worksheet.addRow(subHeaderDataValues);
+
+        Object.keys(jsonData[sheetName].subHeadersData).forEach((key, index) => {
+          const subHeaderDataCell = worksheet.getRow(worksheet.rowCount).getCell(index + 1);
+          if (jsonData[sheetName].subHeadersData[key].style) {
+            subHeaderDataCell.style = jsonData[sheetName].subHeadersData[key].style;
+          }
+        });
+      }
+    }
+
+    // Now add the KeyValue headers from 'keysValue' (if available)
+    const columnHeaders = jsonData[sheetName].keysValue
+      ? Object.values(jsonData[sheetName].keysValue).map((keyValueObj) => keyValueObj.value)
+      : Object.keys(jsonData[sheetName].data[0]);
+
     const headerRow = worksheet.addRow(columnHeaders)
 
     // Apply styles from "keysValue" to the header row
