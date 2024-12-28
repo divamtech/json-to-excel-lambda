@@ -220,18 +220,29 @@ async function convertJsonToCommonStyledExcel(data) {
                   const endCol = startCol + (cell.colspan || 1) - 1;
 
                   worksheet.mergeCells(startRow, startCol, endRow, endCol);
-
-                  colIndex += cell.colspan || 1;
+                  colIndex += (cell.colspan || 1);
+              } 
+              else if (cell.dropdown) {
+                  const formulae = [`"${cell.dropdown.join(",")}"`];
+                  worksheet.getCell(rowIndex + 1, colIndex).dataValidation = {
+                      type: 'list',
+                      allowBlank: false,
+                      formulae: formulae,
+                      showErrorMessage: true,
+                      errorTitle: 'Invalid Selection',
+                      error: 'Please select a value from the dropdown',
+                  };
+                  colIndex++;
               } else {
                   colIndex++;
               }
           });
       });
       worksheet.columns.forEach(column => {
-          column.width = 20; // Set a default width
+          column.width = column.width ? column.width : 20; // Set a default width
       });
   }
-    const buffer = await workbook.xlsx.writeBuffer()
+  const buffer = await workbook.xlsx.writeBuffer();
   return buffer
 }
 
