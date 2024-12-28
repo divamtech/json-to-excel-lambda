@@ -37,6 +37,18 @@ router.post('/lambda/json-to-excel/styled', async (req, res) => {
   }
 })
 
+router.post('/lambda/json-to-excel/common-styled', async (req, res) => {
+  console.log('styled working')
+  try {
+    const jsonData = req.body.excel
+    const excelData = await convertJsonToCommonStyledExcel(jsonData)
+    const url = await uploadToAWS(req.body.config, excelData)
+    return res.json({ url })  
+  } catch (error) {
+    console.log('error', error)
+    res.status(400).json({ message: 'error in your request payload', error: error.message, rawError: error })
+  }
+})
 
 router.post('/api/jsonToExcel', async (req, res) => {
   try {
@@ -188,6 +200,52 @@ async function convertJsonToStyledExcel(jsonData, defaultStyle) {
   const buffer = await workbook.xlsx.writeBuffer()
   return buffer
 }
+
+async function convertJsonToCommonStyledExcel(data) {
+  const workbook = new ExcelJS.Workbook();
+  for (const [sheetName, sheetRows] of Object.entries(data)) {
+      const worksheet = workbook.addWorksheet(sheetName);
+      sheetRows.forEach((row, rowIndex) => {
+          let colIndex = 1;
+          row.forEach(cell => {
+              const currentCell = worksheet.getCell(rowIndex + 1, colIndex);
+              currentCell.value = cell.value;
+              if (cell.style) {
+                  Object.assign(currentCell.style, cell.style);
+              }
+              if (cell.colspan || cell.rowspan) {
+                  const startRow = rowIndex + 1;
+                  const startCol = colIndex;
+                  const endRow = startRow + (cell.rowspan || 1) - 1;
+                  const endCol = startCol + (cell.colspan || 1) - 1;
+
+                  worksheet.mergeCells(startRow, startCol, endRow, endCol);
+                  colIndex += (cell.colspan || 1);
+              } 
+              else if (cell.dropdown) {
+                  const formulae = [`"${cell.dropdown.join(",")}"`];
+                  worksheet.getCell(rowIndex + 1, colIndex).dataValidation = {
+                      type: 'list',
+                      allowBlank: false,
+                      formulae: formulae,
+                      showErrorMessage: true,
+                      errorTitle: 'Invalid Selection',
+                      error: 'Please select a value from the dropdown',
+                  };
+                  colIndex++;
+              } else {
+                  colIndex++;
+              }
+          });
+      });
+      worksheet.columns.forEach(column => {
+          column.width = column.width ? column.width : 20; // Set a default width
+      });
+  }
+  const buffer = await workbook.xlsx.writeBuffer();
+  return buffer
+}
+
 
 // const servicePrefix = process.env.SERVICE_PREFIX || '/'
 app.use('/', router)
