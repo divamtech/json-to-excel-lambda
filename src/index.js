@@ -23,6 +23,36 @@ router.use((req, res, next) => {
   }
 })
 
+router.post('/lambda/json-to-excel/from-link', async (req, res) => {
+  console.log('from link working')
+  try {
+    const { jsonUrl, type } = req.body
+    let jsonData = await fetch(jsonUrl)
+    jsonData = await jsonData.json()
+    const defaultStyle = jsonData.config.default_style
+    let excelFunc = null
+    switch (type) {
+      case 'styled':
+        excelFunc = convertJsonToStyledExcel
+        break
+      case 'common-styled':
+        excelFunc = convertJsonToCommonStyledExcel
+        break
+      case 'simple':
+        excelFunc = convertJsonToExcel
+        break
+      default:
+        throw new Error('Invalid type')
+    }
+    const excelData = await excelFunc(jsonData.excel, defaultStyle)
+    const url = await uploadToAWS(jsonData.config, excelData)
+    return res.json({ url })  
+  } catch (error) {
+    console.log('error', error)
+    res.status(400).json({ message: 'error in your request payload', error: error.message, rawError: error })
+  }
+})
+
 router.post('/lambda/json-to-excel/styled', async (req, res) => {
   console.log('styled working')
   try {
