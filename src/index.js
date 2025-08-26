@@ -17,7 +17,7 @@ const router = express.Router()
 router.use((req, res, next) => {
   const token = req.get('x-auth-token')
   if (!!token && token === AUTH_TOKEN) {
-    next()
+  next()
   } else {
     res.status(401).json({ message: 'Invalid auth token' })
   }
@@ -80,6 +80,29 @@ router.post('/lambda/json-to-excel/common-styled', async (req, res) => {
   }
 })
 
+router.post('/lambda/json-to-excel/client-styled', async (req, res) => {
+  console.log('styled working')
+  try {
+    const jsonData = req.body.excel
+    const excelData = await convertJsonToStyledExcel(jsonData)
+    let finalBuffer = excelData
+    if (jsonData.Countries.data?.length) {
+    const sheetName =  'Clients'
+      const wb=new ExcelJS.Workbook()
+       await wb.xlsx.load(excelData)
+      await injectClientTemplateColumnsIntoSheet(wb, sheetName, jsonData.Countries.data)
+     finalBuffer = await wb.xlsx.writeBuffer()
+     } else {
+      console.log('❌ No countries found, skipping injection')
+     }
+    const url = await uploadToAWS(req.body.config, finalBuffer)
+    return res.json({ url })  
+  } catch (error) {
+    console.log('error', error)
+    res.status(400).json({ message: 'error in your request payload', error: error.message, rawError: error })
+  }
+})
+
 router.post('/api/jsonToExcel', async (req, res) => {
   try {
     console.log('old path')
@@ -112,6 +135,76 @@ const uploadToAWS = async (config, excelData) => {
   }
   const response = await s3.upload(dataset).promise()
   return response.Location
+}
+async function injectClientTemplateColumnsIntoSheet(workbook, sheetName, data) {
+  const sheet = workbook.getWorksheet(sheetName) || workbook.worksheets[0]
+  if (!sheet) throw new Error('Target sheet not found')
+  // Create (or reuse) a hidden sheet "Countries"
+  const countrySheet = workbook.getWorksheet('Countries') || workbook.addWorksheet('Countries')
+  countrySheet.state = 'veryHidden'
+  // Headers
+  countrySheet.getCell('A1').value = 'Country'
+  countrySheet.getCell('B1').value = 'Currency'
+  // find max nob length
+  const maxNobs = Math.max(...data.map(c => (c.nob || []).length))
+  for (let j = 0; j < maxNobs; j++) {
+    countrySheet.getCell(1, 3 + j).value = `NOB${j + 1}`
+  }
+  // Fill rows
+  data.forEach((c, i) => {
+    const r = i + 2
+    countrySheet.getCell(r, 1).value = c.country || ''
+    countrySheet.getCell(r, 2).value = c.currency || ''
+    ;(c.nob || []).forEach((n, j) => {
+      countrySheet.getCell(r, 3 + j).value = n
+    })
+    // Named range for each country NOBs
+    const fromCol = 3
+    const toCol = 2 + maxNobs
+    const range = `${countrySheet.name}!$${String.fromCharCode(65 + fromCol - 1)}${r}:$${String.fromCharCode(65 + toCol - 1)}${r}`
+    // countrySheet.workbook.definedNames.addName(c.country.replace(/\s+/g, "_"), range)
+  })
+  const lastRow = data.length + 1
+  const countryList = `Countries!$A$2:$A$${lastRow}`
+  // Find target columns in client sheet
+  const findHeaderCol = (names) => {
+    const headerRow = sheet.getRow(1)
+    for (let col = 1; col <= sheet.columnCount; col++) {
+      const val = headerRow.getCell(col)?.value
+      const text = typeof val === 'object'
+        ? (val?.richText?.map(rt => rt.text).join('') || val?.result || '')
+        : (val || '')
+      if (names.includes(String(text).trim())) return col
+    }
+    return null
+  }
+  let colCountry = findHeaderCol(['Country', 'country'])
+  let colNob = findHeaderCol(['Nature of Business*', 'category', 'NoB'])
+  let colCurrency = findHeaderCol(['Currency', 'currency'])
+  // Apply validations row-wise
+  const maxRow = Math.max(sheet.rowCount, 200)
+  for (let row = 2; row <= maxRow; row++) {
+    const countryCell = sheet.getRow(row).getCell(colCountry)
+    // Country dropdown
+    countryCell.dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [countryList],
+    }
+    // Nob dropdown (dependent on country)
+    const nobCell = sheet.getRow(row).getCell(colNob)
+    const nobFormula = `=OFFSET(Countries!$C$2,MATCH(${countryCell.address},Countries!$A$2:$A$${lastRow},0)-1,0,1,COUNTA(OFFSET(Countries!$C$2,MATCH(${countryCell.address},Countries!$A$2:$A$${lastRow},0)-1,0,1,200)))`
+    nobCell.dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [nobFormula],
+    }
+    // Currency autofill
+    const currencyCell = sheet.getRow(row).getCell(colCurrency)
+    currencyCell.value = {
+      formula: `=IF(${countryCell.address}="","",VLOOKUP(${countryCell.address},Countries!$A$2:$B$${lastRow},2,FALSE))`
+    }
+  }
 }
 
 const convertJsonToExcel = (jsonData) => {
