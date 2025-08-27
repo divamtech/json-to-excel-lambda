@@ -178,9 +178,9 @@ async function injectClientTemplateColumnsIntoSheet(workbook, sheetName, data) {
     }
     return null
   }
-  let colCountry = findHeaderCol(['Country', 'country'])
+  let colCountry = findHeaderCol(['Country*', 'country'])
   let colNob = findHeaderCol(['Nature of Business*', 'category', 'NoB'])
-  let colCurrency = findHeaderCol(['Currency', 'currency'])
+  let colCurrency = findHeaderCol(['Currency*', 'currency'])
   // Apply validations row-wise
   const maxRow = Math.max(sheet.rowCount, 200)
   for (let row = 2; row <= maxRow; row++) {
