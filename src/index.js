@@ -145,22 +145,24 @@ async function injectClientTemplateColumnsIntoSheet(workbook, sheetName, data) {
   // Headers
   countrySheet.getCell('A1').value = 'Country'
   countrySheet.getCell('B1').value = 'Currency'
+  countrySheet.getCell('C1').value = 'Country Code'
   // find max nob length
   const maxNobs = Math.max(...data.map(c => (c.nob || []).length))
   for (let j = 0; j < maxNobs; j++) {
-    countrySheet.getCell(1, 3 + j).value = `NOB${j + 1}`
+    countrySheet.getCell(1, 4 + j).value = `NOB${j + 1}`
   }
   // Fill rows
   data.forEach((c, i) => {
     const r = i + 2
     countrySheet.getCell(r, 1).value = c.country || ''
     countrySheet.getCell(r, 2).value = c.currency || ''
+    countrySheet.getCell(r, 3).value = c.phonecode || ''
     ;(c.nob || []).forEach((n, j) => {
-      countrySheet.getCell(r, 3 + j).value = n
+      countrySheet.getCell(r, 4 + j).value = n
     })
     // Named range for each country NOBs
-    const fromCol = 3
-    const toCol = 2 + maxNobs
+    const fromCol = 4
+    const toCol = 3 + maxNobs
     const range = `${countrySheet.name}!$${String.fromCharCode(65 + fromCol - 1)}${r}:$${String.fromCharCode(65 + toCol - 1)}${r}`
     // countrySheet.workbook.definedNames.addName(c.country.replace(/\s+/g, "_"), range)
   })
@@ -181,6 +183,7 @@ async function injectClientTemplateColumnsIntoSheet(workbook, sheetName, data) {
   let colCountry = findHeaderCol(['Country*', 'country'])
   let colNob = findHeaderCol(['Nature of Business*', 'category', 'NoB'])
   let colCurrency = findHeaderCol(['Currency*', 'currency'])
+  let colCountryCode = findHeaderCol(['Country Code', 'country_code'])
   // Apply validations row-wise
   const maxRow = Math.max(sheet.rowCount, 200)
   for (let row = 2; row <= maxRow; row++) {
@@ -193,7 +196,7 @@ async function injectClientTemplateColumnsIntoSheet(workbook, sheetName, data) {
     }
     // Nob dropdown (dependent on country)
     const nobCell = sheet.getRow(row).getCell(colNob)
-    const nobFormula = `=OFFSET(Countries!$C$2,MATCH(${countryCell.address},Countries!$A$2:$A$${lastRow},0)-1,0,1,COUNTA(OFFSET(Countries!$C$2,MATCH(${countryCell.address},Countries!$A$2:$A$${lastRow},0)-1,0,1,200)))`
+    const nobFormula = `=OFFSET(Countries!$D$2,MATCH(${countryCell.address},Countries!$A$2:$A$${lastRow},0)-1,0,1,COUNTA(OFFSET(Countries!$D$2,MATCH(${countryCell.address},Countries!$A$2:$A$${lastRow},0)-1,0,1,200)))`
     nobCell.dataValidation = {
       type: 'list',
       allowBlank: true,
@@ -203,6 +206,11 @@ async function injectClientTemplateColumnsIntoSheet(workbook, sheetName, data) {
     const currencyCell = sheet.getRow(row).getCell(colCurrency)
     currencyCell.value = {
       formula: `=IF(${countryCell.address}="","",VLOOKUP(${countryCell.address},Countries!$A$2:$B$${lastRow},2,FALSE))`
+    }
+    //Country Code autofill
+    const codeCell = sheet.getRow(row).getCell(colCountryCode)
+    codeCell.value = {
+    formula: `=IF(${countryCell.address}="","",VLOOKUP(${countryCell.address},Countries!$A$2:$D$${lastRow},3,FALSE))`
     }
   }
 }
