@@ -15,12 +15,12 @@ app.use(express.json({ limit: '50mb' }))
 
 const router = express.Router()
 router.use((req, res, next) => {
-  // const token = req.get('x-auth-token')
-  // if (!!token && token === AUTH_TOKEN) {
+const token = req.get('x-auth-token')
+if (!!token && token === AUTH_TOKEN) {
   next()
-  // } else {
-  //   res.status(401).json({ message: 'Invalid auth token' })
-  // }
+ } else {
+res.status(401).json({ message: 'Invalid auth token' })
+}
 })
 
 router.post('/lambda/json-to-excel/from-link', async (req, res) => {
