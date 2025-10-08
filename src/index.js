@@ -148,49 +148,33 @@ async function injectFormulasIntoSheet(workbook, data, config) {
   if (!primaryKey) throw new Error("Config must specify primaryKey")
   const allGroups = [primaryKey, ...lookupKeys, ...dependentKeys].map(k => Array.isArray(k) ? k : [k])
   const canonicalKeys = allGroups.map(g => g[0]) // always first alias = canonical key
-  const arrayLengths = {}
-  data.forEach((row) => {
-    Object.keys(row).forEach((k) => {
-      if (Array.isArray(row[k])) {
-        const norm = k.toLowerCase()
-        arrayLengths[norm] = Math.max(arrayLengths[norm] || 0, row[k].length)
-      }
-    })
-  })
-  // --- Build expanded headers ---
-  let expandedKeys = []
-  canonicalKeys.forEach((key) => {
-    if (arrayLengths[key]) {
-      for (let i = 0; i < arrayLengths[key]; i++) {
-        expandedKeys.push(i === 0 ? key : `${key}_${i + 1}`)
-      }
-    } else {
-      expandedKeys.push(key)
-    }
-  })
   hiddenSheet.getRows(1, hiddenSheet.rowCount).forEach(r => {
     r.eachCell(c => { c.value = null })
   })
-  hiddenSheet.getRow(1).values = expandedKeys
-  data.forEach((row, i) => {
-    const baseRow = {}
-    Object.keys(row).forEach(k => {
-      baseRow[k.toLowerCase()] = row[k]
-    })
-    const rowValues = []
-    canonicalKeys.forEach((key) => {
+  hiddenSheet.getRow(1).values = canonicalKeys
+  let currentRow = 2 
+  data.forEach((row) => {
+  const baseRow = {}
+  Object.keys(row).forEach(k => {
+    baseRow[k.toLowerCase()] = row[k]
+  })
+  const maxArrayLength = Math.max(
+    ...canonicalKeys.map(key => Array.isArray(baseRow[key]) ? baseRow[key].length : 1)
+  )
+  for (let i = 0; i < maxArrayLength; i++) {
+    const rowValues = canonicalKeys.map(key => {
       const val = baseRow[key]
       if (Array.isArray(val)) {
-        for (let j = 0; j < arrayLengths[key]; j++) {
-          rowValues.push(val[j] || "")
-        }
+        return val[i] || ""
       } else {
-        rowValues.push(val || "")
+        return i === 0 ? val || "" : ""
       }
     })
-    hiddenSheet.getRow(i + 2).values = rowValues
+    hiddenSheet.getRow(currentRow).values = rowValues
+    currentRow++
+    }
   })
-  const lastRow = data.length + 1
+  const lastRow = currentRow -1 
   const primaryRange = `Lookups!$A$2:$A$${lastRow}`
 
   const findCol = (aliases) => {
@@ -217,27 +201,19 @@ async function injectFormulasIntoSheet(workbook, data, config) {
   const colPrimary = findCol(primaryKey)
   if (!colPrimary) throw new Error(`Primary key column ${primaryKey} not found in sheet`)
 
-  const maxRow = Math.max(sheet.rowCount, 200)
-  for (let row = 2; row <= maxRow; row++) {
+  const row = 2
     const primaryCell = sheet.getRow(row).getCell(colPrimary)
-    //primary dropdown
-    primaryCell.dataValidation = {
-      type: 'list',
-      allowBlank: true,
-      formulae: [primaryRange],
-    }
     //Dependent dropdowns
     for (const depGroup of dependentKeys) {
       const colDep = findCol(depGroup)
       if (!colDep) continue
       const depKey = Array.isArray(depGroup) ? depGroup[0] : depGroup
       const depCell = sheet.getRow(row).getCell(colDep)
+      const depColLetter = String.fromCharCode(65 + canonicalKeys.indexOf(depKey))
       depCell.dataValidation = {
         type: 'list',
         allowBlank: true,
-        formulae: [`OFFSET(Lookups!$${String.fromCharCode(65 + canonicalKeys.indexOf(depKey))}$2,MATCH(${primaryCell.address},Lookups!$A$2:$A$${lastRow},0)-1,0,1,
-      COUNTA(OFFSET(Lookups!$${String.fromCharCode(65 + canonicalKeys.indexOf(depKey))}$2,MATCH(${primaryCell.address},Lookups!$A$2:$A$${lastRow},0)-1,0,1,50)))`
-          .replace(/\s+/g, ' ')],
+        formulae: [`Lookups!$${depColLetter}$2:$${depColLetter}$${lastRow}`],
       }
     }
     //Lookup autofill
@@ -246,13 +222,14 @@ async function injectFormulasIntoSheet(workbook, data, config) {
       if (!colLookup) continue
       const lookupKey = Array.isArray(lookupGroup) ? lookupGroup[0] : lookupGroup
       const lookupCell = sheet.getRow(row).getCell(colLookup)
+      const lookupColIndex = canonicalKeys.indexOf(lookupKey) + 1
       lookupCell.value = {
-        formula: `IF(${primaryCell.address}="","",VLOOKUP(${primaryCell.address},Lookups!$A$2:$Z$${lastRow},${canonicalKeys.indexOf(lookupKey) + 1},FALSE))`
+      formula: `IF(${primaryCell.address}="","",VLOOKUP(${primaryCell.address},Lookups!$A$2:$${String.fromCharCode(64 + canonicalKeys.length)}$${lastRow},${lookupColIndex},FALSE))`
       }
     }
 
   }
-}
+
 
 const convertJsonToExcel = (jsonData) => {
   const workbook = xlsx.utils.book_new()
