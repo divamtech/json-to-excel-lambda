@@ -138,98 +138,115 @@ const uploadToAWS = async (config, excelData) => {
 }
 
 async function injectFormulasIntoSheet(workbook, data, config) {
-  const sheetName = config.dependentSheet
-  const sheet = workbook.getWorksheet(sheetName) || workbook.worksheets[0]
-  if (!sheet) throw new Error('Target sheet not found')
   const lookupSheet = config.lookupSheet
   const hiddenSheet = workbook.getWorksheet(lookupSheet) || workbook.addWorksheet(lookupSheet)
   hiddenSheet.state = 'veryHidden'
-  const { primaryKey, dependentKeys = [], lookupKeys = [] } = config
-  if (!primaryKey) throw new Error("Config must specify primaryKey")
-  const allGroups = [primaryKey, ...lookupKeys, ...dependentKeys].map(k => Array.isArray(k) ? k : [k])
-  const canonicalKeys = allGroups.map(g => g[0]) // always first alias = canonical key
-  hiddenSheet.getRows(1, hiddenSheet.rowCount).forEach(r => {
-    r.eachCell(c => { c.value = null })
-  })
-  hiddenSheet.getRow(1).values = canonicalKeys
-  let currentRow = 2 
-  data.forEach((row) => {
-  const baseRow = {}
-  Object.keys(row).forEach(k => {
-    baseRow[k.toLowerCase()] = row[k]
-  })
-  const maxArrayLength = Math.max(
-    ...canonicalKeys.map(key => Array.isArray(baseRow[key]) ? baseRow[key].length : 1)
-  )
-  for (let i = 0; i < maxArrayLength; i++) {
-    const rowValues = canonicalKeys.map(key => {
-      const val = baseRow[key]
-      if (Array.isArray(val)) {
-        return val[i] || ""
-      } else {
-        return i === 0 ? val || "" : ""
-      }
-    })
-    hiddenSheet.getRow(currentRow).values = rowValues
-    currentRow++
-    }
-  })
-  const lastRow = currentRow -1 
-  const primaryRange = `Lookups!$A$2:$A$${lastRow}`
 
-  const findCol = (aliases) => {
+  const headerKeys = [
+    ...new Set(
+      data.flatMap(row => Object.keys(row))
+    )
+  ];
+
+  // Column-wise data insertion into hidden sheet
+  headerKeys.forEach((key, idx) => {
+    const values = data.flatMap(row => row[key] ?? []);
+    values.forEach((val, rowIndex) => {
+      hiddenSheet.getRow(rowIndex + 2).getCell(idx + 1).value = val ?? "";
+    });
+    hiddenSheet.getRow(1).getCell(idx + 1).value = key; 
+  });
+  const findCol = (sheet, aliases) => {
     const headerRow = sheet.getRow(1)
     const lookupNames = Array.isArray(aliases) ? aliases : [aliases]
 
     for (let col = 1; col <= sheet.columnCount; col++) {
       const val = headerRow.getCell(col)?.value
-      const text = typeof val === 'object'
-        ? (val?.richText?.map(rt => rt.text).join('') || val?.result || '')
-        : (val || '')
-      const normalized = String(text).trim().toLowerCase()
+      let text = '';
+
+      if (typeof val === 'object') {
+        if (Array.isArray(val.richText)) {
+          text = val.richText.map(rt => rt.text).join('');
+        } else if (val.result) {
+          text = val.result;
+        }
+      } else if (val !== null && val !== undefined) {
+        text = val;
+      }
+
+      const normalized = String(text || '').trim().toLowerCase();
 
       for (const alias of lookupNames) {
-        const normAlias = alias.trim().toLowerCase()
+        if (!alias) continue;
+        const normAlias = String(alias).trim().toLowerCase()
         if (normalized === normAlias) return col
-        if (normalized.replace(/\s+/g, "_") === normAlias) return col // "Country Code" -> country_code
-        if (normalized.replace(/[^a-z0-9]/gi, "") === normAlias.replace(/[^a-z0-9]/gi, "")) return col // remove *, etc.
+        if (normalized.replace(/\s+/g, "_") === normAlias) return col
+        if (normalized.replace(/[^a-z0-9]/gi, "") === normAlias.replace(/[^a-z0-9]/gi, "")) return col
       }
     }
     return null
   }
-  // --- Primary key col ---
-  const colPrimary = findCol(primaryKey)
-  if (!colPrimary) throw new Error(`Primary key column ${primaryKey} not found in sheet`)
+  for (const sheetConfig of config.dependentSheet) {
+    const sheet = workbook.getWorksheet(sheetConfig.name);
+    if (!sheet) throw new Error(`Sheet ${sheetConfig.name} not found`);
 
-  const row = 2
-    const primaryCell = sheet.getRow(row).getCell(colPrimary)
-    //Dependent dropdowns
-    for (const depGroup of dependentKeys) {
-      const colDep = findCol(depGroup)
-      if (!colDep) continue
-      const depKey = Array.isArray(depGroup) ? depGroup[0] : depGroup
-      const depCell = sheet.getRow(row).getCell(colDep)
-      const depColLetter = String.fromCharCode(65 + canonicalKeys.indexOf(depKey))
-      depCell.dataValidation = {
-        type: 'list',
+    const lastRow = hiddenSheet.lastRow.number;
+
+    //Primary key dropdown (if exists)
+    let primaryCol = null;
+    let primaryCell = null;
+
+    if (sheetConfig.primaryKey) {
+      primaryCol = findCol(sheet, sheetConfig.primaryKey);
+      if (!primaryCol) throw new Error(`Primary key not found in ${sheetConfig.name}`);
+      primaryCell = sheet.getRow(2).getCell(primaryCol);
+
+      const lookupCol = findCol(hiddenSheet, sheetConfig.primaryKey);
+      if (!lookupCol) throw new Error(`Primary key not found in Lookups sheet`);
+      const lookupColLetter = String.fromCharCode(64 + lookupCol);
+
+      primaryCell.dataValidation = {
+        type: "list",
         allowBlank: true,
-        formulae: [`Lookups!$${depColLetter}$2:$${depColLetter}$${lastRow}`],
-      }
+        formulae: [`${hiddenSheet.name}!$${lookupColLetter}$2:$${lookupColLetter}$${lastRow}`],
+      };
     }
-    //Lookup autofill
-    for (const lookupGroup of lookupKeys) {
-      const colLookup = findCol(lookupGroup)
-      if (!colLookup) continue
-      const lookupKey = Array.isArray(lookupGroup) ? lookupGroup[0] : lookupGroup
-      const lookupCell = sheet.getRow(row).getCell(colLookup)
-      const lookupColIndex = canonicalKeys.indexOf(lookupKey) + 1
-      lookupCell.value = {
-      formula: `IF(${primaryCell.address}="","",VLOOKUP(${primaryCell.address},Lookups!$A$2:$${String.fromCharCode(64 + canonicalKeys.length)}$${lastRow},${lookupColIndex},FALSE))`
-      }
+    //Dependent dropdowns
+    for (const depGroup of sheetConfig.dependentKeys || []) {
+      const depCol = findCol(sheet, depGroup); 
+      if (!depCol) continue;
+
+      const depCell = sheet.getRow(2).getCell(depCol);
+
+      const lookupCol = findCol(hiddenSheet, depGroup); 
+      if (!lookupCol) continue;
+      const lookupColLetter = String.fromCharCode(64 + lookupCol);
+
+      depCell.dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: [`${hiddenSheet.name}!$${lookupColLetter}$2:$${lookupColLetter}$${lastRow}`],
+      };
     }
 
+    //Lookup autofill (only if primary key exists)
+    if (primaryCol && sheetConfig.lookupKeys) {
+      for (const lookupGroup of sheetConfig.lookupKeys) {
+        const lookupCol = findCol(sheet, lookupGroup); 
+        if (!lookupCol) continue;
+        const lookupKey = Array.isArray(lookupGroup) ? lookupGroup[0] : lookupGroup;
+        const lookupColIndex = headerKeys.indexOf(lookupKey) + 1;
+        const lookupCell = sheet.getRow(2).getCell(lookupCol);
+
+        lookupCell.value = {
+          formula: `IF(${primaryCell.address}="","",VLOOKUP(${primaryCell.address},${hiddenSheet.name}!$A$2:$${String.fromCharCode(
+            64 + headerKeys.length
+          )}$${lastRow},${lookupColIndex},FALSE))`,
+        };
+      }
+    }
   }
-
+}
 
 const convertJsonToExcel = (jsonData) => {
   const workbook = xlsx.utils.book_new()
