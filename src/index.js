@@ -190,7 +190,7 @@ async function injectFormulasIntoSheet(workbook, data, config) {
     const sheet = workbook.getWorksheet(sheetConfig.name);
     if (!sheet) throw new Error(`Sheet ${sheetConfig.name} not found`);
 
-    const lastRow = hiddenSheet.lastRow.number;
+    let lastRow = 0;
 
     //Primary key dropdown (if exists)
     let primaryCol = null;
@@ -204,7 +204,7 @@ async function injectFormulasIntoSheet(workbook, data, config) {
       const lookupCol = findCol(hiddenSheet, sheetConfig.primaryKey);
       if (!lookupCol) throw new Error(`Primary key not found in Lookups sheet`);
       const lookupColLetter = String.fromCharCode(64 + lookupCol);
-
+      lastRow=data[0][sheetConfig.primaryKey[0]].length + 1
       primaryCell.dataValidation = {
         type: "list",
         allowBlank: true,
@@ -221,7 +221,7 @@ async function injectFormulasIntoSheet(workbook, data, config) {
       const lookupCol = findCol(hiddenSheet, depGroup); 
       if (!lookupCol) continue;
       const lookupColLetter = String.fromCharCode(64 + lookupCol);
-
+      lastRow=data[0][depGroup[0]].length + 1
       depCell.dataValidation = {
         type: "list",
         allowBlank: true,
