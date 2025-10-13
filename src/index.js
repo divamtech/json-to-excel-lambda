@@ -237,7 +237,7 @@ async function injectFormulasIntoSheet(workbook, data, config) {
         const lookupKey = Array.isArray(lookupGroup) ? lookupGroup[0] : lookupGroup;
         const lookupColIndex = headerKeys.indexOf(lookupKey) + 1;
         const lookupCell = sheet.getRow(2).getCell(lookupCol);
-
+        lastRow= hiddenSheet.lastRow.number
         lookupCell.value = {
           formula: `IF(${primaryCell.address}="","",VLOOKUP(${primaryCell.address},${hiddenSheet.name}!$A$2:$${String.fromCharCode(
             64 + headerKeys.length
