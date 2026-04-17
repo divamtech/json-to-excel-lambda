@@ -7,6 +7,7 @@
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "serverless-http": "^3.2.0",
+    "stream": "^0.0.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
