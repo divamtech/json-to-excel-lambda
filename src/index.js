@@ -49,9 +49,14 @@ router.post('/lambda/stream/json-to-excel/from-link', async (req, res) => {
     const excelFunc = getExcelFunc(type)
     const passThrough = new PassThrough()
     // start upload
+    console.log('Process start')
+    const startTime = Date.now()
     const uploadPromise = uploadToAWS(jsonData.config, passThrough, true)
     const streamOptions = { isStream: true, stream: passThrough, defaultStyle: jsonData.config?.default_style }
+    console.log('Function start processing')
     await excelFunc(jsonData.excel, streamOptions)
+    const endTime = Date.now()
+    console.log('::::::::Time taken convert to excel -', (endTime - startTime)/1000,' seconds')
     const response = await uploadPromise
     return res.json({ url: response.Location })
   } catch (error) {
@@ -219,17 +224,16 @@ async function injectFormulasIntoSheet(workbook, data, config) {
 
     //Primary key dropdown (if exists)
     let primaryCol = null;
-    let primaryCell = null;
 
     if (sheetConfig.primaryKey) {
       primaryCol = findCol(sheet, sheetConfig.primaryKey);
       if (!primaryCol) throw new Error(`Primary key not found in ${sheetConfig.name}`);
-      primaryCell = sheet.getRow(2).getCell(primaryCol);
 
       const lookupCol = findCol(hiddenSheet, sheetConfig.primaryKey);
       if (!lookupCol) throw new Error(`Primary key not found in Lookups sheet`);
       const lookupColLetter = String.fromCharCode(64 + lookupCol);
       lastRow=data[0][sheetConfig.primaryKey[0]].length + 1
+      const primaryCell = sheet.getRow(2).getCell(primaryCol);
       primaryCell.dataValidation = {
         type: "list",
         allowBlank: true,
@@ -241,12 +245,11 @@ async function injectFormulasIntoSheet(workbook, data, config) {
       const depCol = findCol(sheet, depGroup); 
       if (!depCol) continue;
 
-      const depCell = sheet.getRow(2).getCell(depCol);
-
       const lookupCol = findCol(hiddenSheet, depGroup); 
       if (!lookupCol) continue;
       const lookupColLetter = String.fromCharCode(64 + lookupCol);
       lastRow=data[0][depGroup[0]].length + 1
+      const depCell = sheet.getRow(2).getCell(depCol);
       depCell.dataValidation = {
         type: "list",
         allowBlank: true,
@@ -261,10 +264,11 @@ async function injectFormulasIntoSheet(workbook, data, config) {
         if (!lookupCol) continue;
         const lookupKey = Array.isArray(lookupGroup) ? lookupGroup[0] : lookupGroup;
         const lookupColIndex = headerKeys.indexOf(lookupKey) + 1;
-        const lookupCell = sheet.getRow(2).getCell(lookupCol);
         lastRow= hiddenSheet.lastRow.number
+        const lookupCell = sheet.getRow(2).getCell(lookupCol);
+        const primaryAddress = sheet.getRow(2).getCell(primaryCol).address
         lookupCell.value = {
-          formula: `IF(${primaryCell.address}="","",VLOOKUP(${primaryCell.address},${hiddenSheet.name}!$A$2:$${String.fromCharCode(
+          formula: `IF(${primaryAddress}="","",VLOOKUP(${primaryAddress},${hiddenSheet.name}!$A$2:$${String.fromCharCode(
             64 + headerKeys.length
           )}$${lastRow},${lookupColIndex},FALSE))`,
         };
@@ -282,9 +286,16 @@ function resolveStreamOptions(second) {
 
 function resolveStyledOptions(second) {
   if (second == null) return {}
-  if (typeof second !== 'object') return {}
-  if (second.isStream === true || second.stream != null) return second
-  return { defaultStyle: second }
+
+  if (typeof second !== 'object') {
+    return { defaultStyle: second }
+  }
+
+  return {
+    isStream: second.isStream === true,
+    stream: second.stream ?? null,
+    defaultStyle: second.defaultStyle ?? second,
+  }
 }
 
 async function convertJsonToExcel(jsonData, second = {}) {
@@ -335,123 +346,139 @@ async function convertJsonToStyledExcel(jsonData, second = {}) {
   const { isStream = false, stream = null, defaultStyle } = options
 
   const workbook = isStream
-    ? new ExcelJS.stream.xlsx.WorkbookWriter({
+  ? new ExcelJS.stream.xlsx.WorkbookWriter({
       stream,
       useStyles: true,
       useSharedStrings: true,
     })
-    : new ExcelJS.Workbook()
+  : new ExcelJS.Workbook()
 
-  for (const sheetName of Object.keys(jsonData)) {
-    const sheet = jsonData[sheetName]
-    const worksheet = workbook.addWorksheet(sheetName)
+for (const sheetName of Object.keys(jsonData)) {
+  const sheet = jsonData[sheetName]
+  const worksheet = workbook.addWorksheet(sheetName)
 
-    // Headers
-    if (sheet.headers) {
-      for (const [headerText, style] of Object.entries(sheet.headers)) {
-        const row = worksheet.addRow([headerText])
-        if (style) row.getCell(1).style = style
-        if (isStream) row.commit()
+  // Headers
+  if (sheet.headers) {
+    for (const [headerText, style] of Object.entries(sheet.headers)) {
+      const row = worksheet.addRow([headerText])
+      if (style) row.getCell(1).style = style
+      if (isStream) row.commit()
+    }
+  }
+
+  // SubHeaders
+  if (sheet.subHeaders) {
+    const values = Object.values(sheet.subHeaders).map(s => s.value)
+    const row = worksheet.addRow(values)
+
+    Object.values(sheet.subHeaders).forEach((s, i) => {
+      if (s.style) row.getCell(i + 1).style = s.style
+    })
+
+    if (isStream) row.commit()
+  }
+
+  // SubHeadersData
+  if (sheet.subHeadersData) {
+    const obj = sheet.subHeadersData[0]
+    const values = Object.keys(obj).map(k => obj[k].value)
+
+    const row = worksheet.addRow(values)
+
+    Object.keys(obj).forEach((key, i) => {
+      if (obj[key].style) {
+        row.getCell(i + 1).style = obj[key].style
       }
-    }
+    })
 
-    // SubHeaders
-    if (sheet.subHeaders) {
-      const values = Object.values(sheet.subHeaders).map(s => s.value)
-      const row = worksheet.addRow(values)
+    if (isStream) row.commit()
+  }
 
-      Object.values(sheet.subHeaders).forEach((s, i) => {
-        if (s.style) row.getCell(i + 1).style = s.style
-      })
+  // Column headers
+  const columnHeaders = sheet.keysValue
+    ? Object.values(sheet.keysValue).map(k => k.value)
+    : Object.keys(sheet.data[0])
 
-      if (isStream) row.commit()
-    }
+  const headerRow = worksheet.addRow(columnHeaders)
 
-    // SubHeadersData
-    if (sheet.subHeadersData) {
-      const obj = sheet.subHeadersData[0]
-      const values = Object.keys(obj).map(k => obj[k].value)
+  if (sheet.keysValue) {
+    Object.values(sheet.keysValue).forEach((k, i) => {
+      if (k.style) headerRow.getCell(i + 1).style = k.style
+    })
+  }
 
-      const row = worksheet.addRow(values)
+  if (isStream) headerRow.commit()
 
-      Object.keys(obj).forEach((key, i) => {
-        if (obj[key].style) {
-          row.getCell(i + 1).style = obj[key].style
-        }
-      })
+  const headers = Object.keys(sheet.data[0])
 
-      if (isStream) row.commit()
-    }
+  // Track data start row
+  const dataStartRow = worksheet.rowCount + 1
 
-    // Column headers
-    const columnHeaders = sheet.keysValue
-      ? Object.values(sheet.keysValue).map(k => k.value)
-      : Object.keys(sheet.data[0])
+  // Rows
+  for (const row of sheet.data) {
+    const excelRow = worksheet.addRow(headers.map(k => row[k].value))
 
-    const headerRow = worksheet.addRow(columnHeaders)
+    headers.forEach((key, colIndex) => {
+      const cell = excelRow.getCell(colIndex + 1)
 
-    if (sheet.keysValue) {
-      Object.values(sheet.keysValue).forEach((k, i) => {
-        if (k.style) headerRow.getCell(i + 1).style = k.style
-      })
-    }
+      if (row[key].style) {
+        cell.style = row[key].style
+      }
+    })
 
-    if (isStream) headerRow.commit()
+    if (isStream) excelRow.commit()
+  }
 
-    const headers = Object.keys(sheet.data[0])
+  // ✅ Validation ONLY in non-stream mode
+  if (!isStream) {
+    let validationColPointer = headers.length + 2
 
-    // Rows
-    for (const row of sheet.data) {
-      const excelRow = worksheet.addRow(headers.map(k => row[k].value))
-
-      headers.forEach((key, colIndex) => {
-        const cell = excelRow.getCell(colIndex + 1)
-        if (row[key].style) {
-          cell.style = row[key].style
-        }
-      })
-
-      if (isStream) excelRow.commit()
-    }
-
-    // Apply validation ONCE per column (not per row)
     headers.forEach((key, colIndex) => {
       const firstRow = sheet.data[0]?.[key]
-      if (firstRow?.input) {
-        const formulae = firstRow.input.options
-          ? [`"${firstRow.input.options.join(',')}"`]
-          : []
 
-        worksheet.getColumn(colIndex + 1).eachCell({ includeEmpty: true }, (cell, rowNumber) => {
-          if (rowNumber > 1) {
-            cell.dataValidation = {
-              type: firstRow.input.type || '',
-              allowBlank: false,
-              formulae,
-              showErrorMessage: true,
-              errorTitle: 'Invalid Selection',
-              error: 'Please select a value from the dropdown',
-            }
-          }
+      if (firstRow?.input?.options?.length) {
+        const options = firstRow.input.options
+        const col = worksheet.getColumn(validationColPointer)
+        const colLetter = col.letter
+
+        // Fill hidden column
+        options.forEach((opt, i) => {
+          worksheet.getCell(`${colLetter}${i + 1}`).value = opt
         })
+
+        const range = `$${colLetter}$1:$${colLetter}$${options.length}`
+
+        for (let r = dataStartRow; r < dataStartRow + sheet.data.length; r++) {
+          worksheet.getRow(r).getCell(colIndex + 1).dataValidation = {
+            type: 'list',
+            allowBlank: true,
+            formulae: [range],
+            showErrorMessage: true,
+            errorTitle: 'Invalid Selection',
+            error: 'Please select a value from the dropdown',
+          }
+        }
+
+        col.hidden = true
+        validationColPointer++
       }
     })
-
-    // column width
-    worksheet.columns.forEach(col => {
-      col.width = defaultStyle?.width || 20
-    })
-
-    // commit sheet (ONLY HERE)
-    if (isStream) worksheet.commit()
   }
 
-  if (isStream) {
-    await workbook.commit()
-    return true
-  } else {
-    return await workbook.xlsx.writeBuffer()
-  }
+  // Column width
+  worksheet.columns.forEach(col => {
+    col.width = defaultStyle?.width || 20
+  })
+
+  if (isStream) worksheet.commit()
+}
+
+if (isStream) {
+  await workbook.commit()
+  return true
+} else {
+  return await workbook.xlsx.writeBuffer()
+}
 }
 
 async function convertJsonToCommonStyledExcel(data, second = {}) {
